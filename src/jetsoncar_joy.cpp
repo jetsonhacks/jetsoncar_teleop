@@ -62,6 +62,8 @@ private:
   // app button
   int appButton ;
 
+  bool throttleInitialized ;
+
   double l_scale_, a_scale_;
   ros::Publisher vel_pub_;
   ros::Subscriber joy_sub_;
@@ -109,7 +111,8 @@ JetsonCarTeleop::JetsonCarTeleop():
   rightPressed(false),
   appPressed(false),
   followerOn(false),
-  a_scale_(0.9)
+  a_scale_(0.9),
+  throttleInitialized(false)
 {
   ph_.param("axis_linear", linear_, linear_);
   ph_.param("axis_angular", angular_, angular_);
@@ -161,27 +164,45 @@ void sleepok(int t, ros::NodeHandle &nh)
 
 void JetsonCarTeleop::joyCallback(const sensor_msgs::Joy::ConstPtr& joy)
 { 
-  geometry_msgs::Twist vel;
-  vel.angular.z = a_scale_*joy->axes[angular_];
-  vel.linear.x = l_scale_*joy->axes[linear_];
+    deadman_pressed_ = joy->buttons[deadman_axis_];
 
-  // This should be done in another node that translates joystick to 0.0 to 1.0
-  vel.angular.z = 1 - (0.5 + (vel.angular.z/2)); // Steering angle is mapped from 0.0 to 1.0
-  vel.linear.x = ((1-(0.5+vel.linear.x))/2)+0.5 ; // throttle is mapped from 0.5 to 1.0 (0.5 is idle) positive is forward
-  last_published_ = vel;
-  deadman_pressed_ = joy->buttons[deadman_axis_];
+    aPressed = joy->buttons[aButton] == 1;
+    bPressed = joy->buttons[bButton] == 1;
+    xPressed = joy->buttons[xButton] == 1 ;
+    leftPressed = joy->buttons[leftButton] == 1 ;
+    rightPressed = joy->buttons[rightButton] == 1;
+    appPressed = joy->buttons[appButton] == 1 ;
 
-  aPressed = joy->buttons[aButton] == 1;
-  bPressed = joy->buttons[bButton] == 1;
-  xPressed = joy->buttons[xButton] == 1 ;
-  leftPressed = joy->buttons[leftButton] == 1 ;
-  rightPressed = joy->buttons[rightButton] == 1;
-  appPressed = joy->buttons[appButton] == 1 ;
-  
-  leftTrigger = joy->axes[leftTriggerIndex];
-  rightTrigger = joy->axes[rightTriggerIndex];
-  crossVertical = joy->axes[crossVerticalIndex];
-  crossHorizontal = joy->axes[crossHorizontalIndex];
+    leftTrigger = joy->axes[leftTriggerIndex];
+    rightTrigger = joy->axes[rightTriggerIndex];
+    crossVertical = joy->axes[crossVerticalIndex];
+    crossHorizontal = joy->axes[crossHorizontalIndex];
+
+    // On some controllers, the right trigger is zero until it is used the first time
+    geometry_msgs::Twist vel;
+    if (!throttleInitialized && (joy->axes[linear_] != 0.0)) {
+        throttleInitialized = true ;
+    }
+    // Steering angle
+    vel.angular.z = a_scale_*joy->axes[angular_];
+    // This should be done in another node that translates joystick to 0.0 to 1.0
+    vel.angular.z = 1 - (0.5 + (vel.angular.z/2)); // Steering angle is mapped from 0.0 to 1.0
+    // throttle ESC
+    if (throttleInitialized == true) {
+        vel.linear.x = l_scale_*joy->axes[linear_];
+    } else {
+        // Fake throttle until initialized;
+        vel.linear.x = l_scale_*1.0;
+    }
+
+    if (rightPressed == true) {
+        // set to the minimum
+        vel.linear.x=0.54 ;
+    } else {
+        vel.linear.x = ((1-(0.5+vel.linear.x))/2)+0.5 ; // throttle is mapped from 0.5 to 1.0 (0.5 is idle) positive is forward
+    }
+
+    last_published_ = vel;
 }
 
 void JetsonCarTeleop::publish()
@@ -228,7 +249,6 @@ int main(int argc, char** argv)
   ros::NodeHandle nh ;
 
   JetsonCarTeleop jetsoncar_teleop;
-
   ros::spin();
 
 
